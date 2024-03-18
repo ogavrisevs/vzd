@@ -1,3 +1,5 @@
 *.zip
 *.db
 .DS_Store
+adr/aw_csv
+adr/vzd.pdf

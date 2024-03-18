@@ -11,11 +11,11 @@ declare -a resources=("ac8958ca-f958-4830-9c23-9e753a49150c" "1d8cfa37-fc6d-4c27
 declare -a years=("nitis_csv_2024.zip" "nitis_csv_2023.zip" "nitis_csv_2022.zip" "nitis_csv_2021.zip" "nitis_csv_2020.zip" "nitis_csv_2019.zip" "nitis_csv_2018.zip" "nitis_csv_2017.zip" "nitis_csv_2016.zip" "nitis_csv_2015.zip" "nitis_csv_2014.zip" "nitis_csv_2013.zip" "nitis_csv_2012.zip")
 resource_length=${#resources[@]}
 
-# for (( i=0; i<${resource_length}; i++ ));
-# do
-#   echo "Downloading ${years[$i]}"
-#   wget $DATA"/dataset/"$DATASET"/resource/${resources[$i]}/download/${years[$i]}"
-# done
+for (( i=0; i<${resource_length}; i++ ));
+do
+  echo "Downloading ${years[$i]}"
+  wget $DATA"/dataset/"$DATASET"/resource/${resources[$i]}/download/${years[$i]}"
+done
 
 EXTRACT_DIR="all"
 DB_NAME="vzd.db"
