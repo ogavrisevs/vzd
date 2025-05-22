@@ -19,6 +19,27 @@ Run python:
 
     python3 main.py 
 
+Merge into one table 
+--------------------
+
+Create table :
+
+    sqlite3 vzd.db < create-merge.sql
+
+Run python: 
+
+    python3 merge.py 
+
+Export table as csv
+-------------------
+
+    sqlite3 vzd.db
+    .headers on
+    .mode csv
+    .output adr.csv
+    SELECT * FROM aw_merge where statuss == 'EKS';
+    .quit
+
 Query sample 
 ---------------
 
