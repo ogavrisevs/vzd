@@ -7,7 +7,9 @@ Requiremnts
 Running 
 --------
 
-    Execute bash script `./run.sh` script will download datasets and load to `vsd.db`. 
+    Execute bash/zsh script `./download.sh` script will download datasets.
+
+    Execute python `./python3 load_sqlite.py` script will load rows to `vsd.db`. 
     When db is ready you can easily query data, for example : 
 
     $ sqlite3 vzd.db "select address, deal_date, deal_amount from tg where address like 'Dzelzavas iela 99%'"

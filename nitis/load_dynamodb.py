@@ -302,7 +302,8 @@ def convert_row(row, file_type, sequence_num):
             if 'room_group_cadastral_id' in item:
                 item['sk'] = item['room_group_cadastral_id']
         elif file_type == "ZVB":
-            item['sk'] = f"{primary_key}"
+            if 'building_cadastral_id' in item:
+                item['sk']  = item['building_cadastral_id']
 
         # Add composite field for file_type and deal_date_year if date is available
         if 'deal_date_year' in item:
@@ -344,8 +345,6 @@ def process_csv_file(file_path):
         with table.batch_writer() as batch:
             row_count = 0
             for row in reader:
-                if row_count >= 200:
-                    break
                 item = convert_row(row, file_type, row_count + 1)  # Pass sequence number
                 if item and 'pk' in item:  # Only insert if item has data and primary key
                     # Use (pk, sk) tuple for uniqueness
@@ -370,12 +369,10 @@ csv_files = []
 # Walk through the nitis directory and subdirectories to find all CSV files
 for root, dirs, files in os.walk(nitis_dir):
     for file in files:
-        #if file.endswith('.csv') and file.startswith('TG_CSV') or file.startswith('ZV_CSV') or file.startswith('ZVB_CSV'):
-        if file.endswith('ZVB_CSV_2025.csv'):
+        if file.endswith('.csv') and file.startswith('TG_CSV') or file.startswith('ZV_CSV') or file.startswith('ZVB_CSV'):
             csv_file_path = os.path.join(root, file)
             csv_files.append(csv_file_path)
 
-#Processing file: ./nitis/all/ZVB_CSV_2012.csv
 # Sort files for consistent processing order
 csv_files.sort()
 
