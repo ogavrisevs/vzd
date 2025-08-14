@@ -2,8 +2,32 @@ import sqlite3
 import datetime
 
 #check_same_thread=False, isolation_level=None, cached_statements=1024
-connection = sqlite3.connect('vzd.db', isolation_level=None) 
+connection = sqlite3.connect('adr.db', isolation_level=None) 
 seconds_in_day = 24 * 60 * 60
+
+# Create aw_merge table if it doesn't exist
+def create_merge_table():
+    create_table_sql = """
+    CREATE TABLE IF NOT EXISTS aw_merge (
+        adr varchar(256),
+        kods int,
+        tips smallint,
+        statuss varchar(3),
+        dziv varchar(128), 
+        eka varchar(128), 
+        iela varchar(128), 
+        ciems varchar(128), 
+        pilseta varchar(128), 
+        pagasts varchar(128), 
+        novads varchar(128), 
+        rajons varchar(128),
+        pasta_kods varchar(7),
+        UNIQUE(kods, tips)
+    );
+    """
+    connection.execute(create_table_sql)
+    connection.commit()
+    print("Created aw_merge table")
  
 def tips_to_table_name(tips : int):
    if tips == 102:
@@ -83,10 +107,10 @@ def insert_merged(adr_rows : list):
     values.append(selected["statuss"])
 
     columns_line = " , ".join(columns)
-    values_line = ', '.join(f'"{w}"' for w in values)
+    placeholders = ', '.join(['?' for _ in values])
 
-    statement = f"INSERT INTO aw_merge ({ columns_line }) VALUES ( { values_line } );"
-    connection.execute(statement)
+    statement = f"INSERT INTO aw_merge ({ columns_line }) VALUES ( { placeholders } );"
+    connection.execute(statement, values)
 
 def row_exists(kods :str, tips :str, table_name : str = "aw_merge"):
     data = connection.execute(f"SELECT 1 FROM { table_name } where kods = { kods } and tips = { tips }") 
@@ -136,6 +160,9 @@ def process_table(table_name :str):
     print (f"Row Count after proc. : { get_row_count('aw_merge') } ")
 
 print("Start ...")
+
+# Create the merge table first
+create_merge_table()
 
 process_table("aw_dziv")
 process_table("aw_eka")
