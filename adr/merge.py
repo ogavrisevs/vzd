@@ -2,11 +2,18 @@ import sqlite3
 import datetime
 
 #check_same_thread=False, isolation_level=None, cached_statements=1024
-connection = sqlite3.connect('adr.db', isolation_level=None) 
+connection = sqlite3.connect('adr.db', isolation_level=None)
 seconds_in_day = 24 * 60 * 60
+# PRAGMA settings for fast bulk insert
+connection.execute("PRAGMA synchronous = OFF;")
+connection.execute("PRAGMA journal_mode = MEMORY;")
+connection.execute("PRAGMA temp_store = MEMORY;")
+connection.execute("PRAGMA cache_size = 100000;")
 
-# Create aw_merge table if it doesn't exist
 def create_merge_table():
+    # Drop aw_merge table if exists
+    #connection.execute("DROP TABLE IF EXISTS aw_merge;")
+    #connection.commit()
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS aw_merge (
         adr varchar(256),
@@ -27,7 +34,7 @@ def create_merge_table():
     """
     connection.execute(create_table_sql)
     connection.commit()
-    print("Created aw_merge table")
+    print("Dropped and created aw_merge table")
  
 def tips_to_table_name(tips : int):
    if tips == 102:
@@ -49,12 +56,19 @@ def tips_to_table_name(tips : int):
    else:
     return "aw_unknown"
 
-def find_parrent( table_name :str, kods :str, tips_cd :str):
-  statement = f"SELECT KODS, TIPS_CD, NOSAUKUMS, STATUSS, VKUR_CD, VKUR_TIPS, ATRIB FROM {table_name} where KODS = {kods} and TIPS_CD = {tips_cd}; "
-  cursor = connection.execute(statement) 
-  row = cursor.fetchone() 
-  parrent = { "kods": row[0] , "tips_cd": row[1], "nosaukums": row[2], "status": row[3], "vkur_cd": row[4], "vkur_tips": row[5], "atrib": row[6] }
-  return parrent
+parent_cache = dict()
+def find_parrent(table_name: str, kods: str, tips_cd: str):
+    cache_key = (table_name, kods, tips_cd)
+    if cache_key in parent_cache:
+        return parent_cache[cache_key]
+    statement = f"SELECT KODS, TIPS_CD, NOSAUKUMS, STATUSS, VKUR_CD, VKUR_TIPS, ATRIB FROM {table_name} where KODS = {kods} and TIPS_CD = {tips_cd}; "
+    cursor = connection.execute(statement)
+    row = cursor.fetchone()  
+    if row is None:
+        return None
+    parrent = {"kods": row[0], "tips_cd": row[1], "nosaukums": row[2], "status": row[3], "vkur_cd": row[4], "vkur_tips": row[5], "atrib": row[6]}
+    parent_cache[cache_key] = parrent
+    return parrent
 
 def get_parrents ( parrents: list, vkur_cd :str, vkur_tips :str ) :
     #print(f"search for vkur_cd: {vkur_cd} , vkur_tips: {vkur_tips}")
@@ -77,41 +91,6 @@ def get_row_count(table_name :str):
     row_count = cursor.fetchall()[0]
     return row_count[0]
 
-def insert_merged(adr_rows : list):
-    columns = []
-    values = []
-    selected = dict()
-    for adr_row in  adr_rows: 
-        if adr_row['tips'] == 101:
-            continue
-        if adr_row['tips'] == 108:
-            columns.append("pasta_kods")
-            values.append(adr_row["pasta_kods"])
-        if "selected" in adr_row.keys() and adr_row['selected'] == True:
-            selected = adr_row
-            
-        table_name = tips_to_table_name(adr_row['tips'])
-        columns.append(f"{table_name.replace('aw_', '')}")
-        values.append(adr_row['nosaukums'])
-
-    columns.append("adr")
-    values.append(selected["adr"])
-
-    columns.append("kods")
-    values.append(selected["kods"])
-
-    columns.append("tips")
-    values.append(selected["tips"])
-
-    columns.append("statuss")
-    values.append(selected["statuss"])
-
-    columns_line = " , ".join(columns)
-    placeholders = ', '.join(['?' for _ in values])
-
-    statement = f"INSERT INTO aw_merge ({ columns_line }) VALUES ( { placeholders } );"
-    connection.execute(statement, values)
-
 def row_exists(kods :str, tips :str, table_name : str = "aw_merge"):
     data = connection.execute(f"SELECT 1 FROM { table_name } where kods = { kods } and tips = { tips }") 
     rez = data.fetchone()
@@ -122,55 +101,111 @@ def row_exists(kods :str, tips :str, table_name : str = "aw_merge"):
     
     return False
 
-def process_table(table_name :str):
+def prepare_standardized_row(adr_rows):
+    """Prepare a standardized row with all columns in fixed order"""
+    # Initialize all columns with None
+    row_data = [None] * 13  # 13 columns total
+    selected = None
+    
+    for adr_row in adr_rows:
+        if adr_row['tips'] == 101:
+            continue
+            
+        if "selected" in adr_row and adr_row['selected']:
+            selected = adr_row
+            
+        table_name = tips_to_table_name(adr_row['tips'])
+        column_name = table_name.replace('aw_', '')
+        
+        # Map to standardized column positions
+        column_map = {
+            'dziv': 4, 'eka': 5, 'iela': 6, 'ciems': 7, 
+            'pilseta': 8, 'pagasts': 9, 'novads': 10, 'rajons': 11
+        }
+        
+        if column_name in column_map:
+            row_data[column_map[column_name]] = adr_row['nosaukums']
+            
+        # Handle pasta_kods
+        if adr_row['tips'] == 108 and 'pasta_kods' in adr_row:
+            row_data[12] = adr_row['pasta_kods']
+    
+    if selected:
+        row_data[0] = selected["adr"]      # adr
+        row_data[1] = selected["kods"]     # kods  
+        row_data[2] = selected["tips"]     # tips
+        row_data[3] = selected["statuss"]  # statuss
+        return row_data
+    
+    return None
+
+def process_table_bulk(table_name: str):
     print(f" Search for : {table_name}")
     statement = f"SELECT KODS, TIPS_CD, NOSAUKUMS, STATUSS, VKUR_CD, VKUR_TIPS, STD , ATRIB FROM { table_name }; "
     cursor = connection.execute(statement) 
     rows = cursor.fetchall() 
     total_count = get_row_count(table_name)
     print (f"Found : { total_count } rows for table : { table_name }")
+    
     counter = 0 
+    batch_size = 10000
+    batch_values = []
     first_time = datetime.datetime.now()
-    for row in rows: 
-        counter += 1
-        if counter % 1000 == 0:
-            later_time = datetime.datetime.now()
-            difference = later_time - first_time
-            min, sec = divmod(difference.days * seconds_in_day + difference.seconds, 60)
-            print(f"Inserted {counter} / {total_count} rows . . . ( min : { min } , sec : { sec } ) ")
-            first_time = datetime.datetime.now()
-
-        if row_exists(kods = row[0] , tips = row[1]):
-            continue
-
-        parrents = list()
-        table_row = {
-            "nosaukums": row[2] ,
-            "kods": row[0], 
-            "tips": row[1],
-            "table": tips_to_table_name(row[1]), 
-            "adr": row[6], 
-            "statuss": row[3], 
-            "pasta_kods": row[7],
-            "selected" : True 
-        }
-        parrents.append(table_row)
-        get_parrents(parrents = parrents , vkur_cd = row[4], vkur_tips = row[5])  
-        insert_merged(adr_rows = parrents)
-    print (f"Row Count after proc. : { get_row_count('aw_merge') } ")
+    
+    # Prepare the INSERT statement once
+    all_columns = ["adr", "kods", "tips", "statuss", "dziv", "eka", "iela", "ciems", "pilseta", "pagasts", "novads", "rajons", "pasta_kods"]
+    columns_line = ", ".join(all_columns)
+    placeholders = ", ".join(["?" for _ in all_columns])
+    insert_statement = f"INSERT INTO aw_merge ({columns_line}) VALUES ({placeholders})"
+    
+    # Begin transaction for bulk insert
+    connection.execute("BEGIN TRANSACTION;")
+    try:
+        for row in rows:
+            counter += 1
+            parrents = list()
+            table_row = {
+                "nosaukums": row[2],
+                "kods": row[0],
+                "tips": row[1],
+                "table": tips_to_table_name(row[1]),
+                "adr": row[6],
+                "statuss": row[3],
+                "pasta_kods": row[7],
+                "selected": True
+            }
+            parrents.append(table_row)
+            get_parrents(parrents=parrents, vkur_cd=row[4], vkur_tips=row[5])
+            # Prepare standardized row data
+            row_data = prepare_standardized_row(parrents)
+            if row_data:
+                batch_values.append(row_data)
+            # Execute batch insert when batch is full
+            if len(batch_values) >= batch_size:
+                connection.executemany(insert_statement, batch_values)
+                batch_values = []
+                later_time = datetime.datetime.now()
+                difference = later_time - first_time
+                min, sec = divmod(difference.days * seconds_in_day + difference.seconds, 60)
+                print(f"Processed {counter} / {total_count} rows . . . ( min : {min} , sec : {sec} ) ")
+                first_time = datetime.datetime.now()
+        # Execute remaining batch
+        if batch_values:
+            connection.executemany(insert_statement, batch_values)
+    finally:
+        connection.commit()
 
 print("Start ...")
 
 # Create the merge table first
 create_merge_table()
-
-process_table("aw_dziv")
-process_table("aw_eka")
-process_table("aw_iela")
-process_table("aw_pilseta")
-process_table("aw_ciems")
-process_table("aw_pagasts")
-process_table("aw_novads")
+process_table_bulk("aw_dziv")
+process_table_bulk("aw_novads")
+process_table_bulk("aw_pagasts")
+process_table_bulk("aw_ciems")
+process_table_bulk("aw_pilseta")
+process_table_bulk("aw_iela")
+process_table_bulk("aw_eka")
 
 print("Done.")
 
