@@ -9,6 +9,34 @@ connection.execute("PRAGMA synchronous = OFF;")
 connection.execute("PRAGMA journal_mode = MEMORY;")
 connection.execute("PRAGMA temp_store = MEMORY;")
 connection.execute("PRAGMA cache_size = 100000;")
+connection.execute("PRAGMA foreign_keys = OFF;")
+
+# Create helpful indexes (no-op if they already exist)
+def ensure_indexes():
+    idx_ddl = [
+        # Base tables
+        ("aw_dziv", "CREATE INDEX IF NOT EXISTS idx_aw_dziv_kods_tips ON aw_dziv(KODS, TIPS_CD)"),
+        ("aw_dziv", "CREATE INDEX IF NOT EXISTS idx_aw_dziv_vkur ON aw_dziv(VKUR_CD, VKUR_TIPS)"),
+        ("aw_eka", "CREATE INDEX IF NOT EXISTS idx_aw_eka_kods_tips ON aw_eka(KODS, TIPS_CD)"),
+        ("aw_eka", "CREATE INDEX IF NOT EXISTS idx_aw_eka_vkur ON aw_eka(VKUR_CD, VKUR_TIPS)"),
+        ("aw_iela", "CREATE INDEX IF NOT EXISTS idx_aw_iela_kods_tips ON aw_iela(KODS, TIPS_CD)"),
+        ("aw_iela", "CREATE INDEX IF NOT EXISTS idx_aw_iela_vkur ON aw_iela(VKUR_CD, VKUR_TIPS)"),
+        ("aw_ciems", "CREATE INDEX IF NOT EXISTS idx_aw_ciems_kods_tips ON aw_ciems(KODS, TIPS_CD)"),
+        ("aw_ciems", "CREATE INDEX IF NOT EXISTS idx_aw_ciems_vkur ON aw_ciems(VKUR_CD, VKUR_TIPS)"),
+        ("aw_pagasts", "CREATE INDEX IF NOT EXISTS idx_aw_pagasts_kods_tips ON aw_pagasts(KODS, TIPS_CD)"),
+        ("aw_pilseta", "CREATE INDEX IF NOT EXISTS idx_aw_pilseta_kods_tips ON aw_pilseta(KODS, TIPS_CD)"),
+        ("aw_novads", "CREATE INDEX IF NOT EXISTS idx_aw_novads_kods_tips ON aw_novads(KODS, TIPS_CD)"),
+        ("aw_rajons", "CREATE INDEX IF NOT EXISTS idx_aw_rajons_kods_tips ON aw_rajons(KODS, TIPS_CD)"),
+    ]
+    for _, stmt in idx_ddl:
+        try:
+            connection.execute(stmt)
+        except Exception:
+            # If a table is missing, ignore index creation for it
+            pass
+    connection.commit()
+
+ensure_indexes()
 
 def create_merge_table():
     # Drop aw_merge table if exists
@@ -57,18 +85,46 @@ def tips_to_table_name(tips : int):
     return "aw_unknown"
 
 parent_cache = dict()
+
+# Preload parent tables into memory maps to avoid per-row DB lookups
+def build_parent_maps():
+    tables = ["aw_eka", "aw_iela", "aw_ciems", "aw_pagasts", "aw_pilseta", "aw_novads", "aw_rajons"]
+    maps = {}
+    for t in tables:
+        try:
+            cur = connection.execute(f"SELECT KODS, TIPS_CD, NOSAUKUMS, STATUSS, VKUR_CD, VKUR_TIPS, ATRIB FROM {t}")
+            d = {}
+            for r in cur:
+                d[(r[0], r[1])] = {"kods": r[0], "tips_cd": r[1], "nosaukums": r[2], "status": r[3], "vkur_cd": r[4], "vkur_tips": r[5], "atrib": r[6]}
+            maps[t] = d
+        except Exception:
+            maps[t] = {}
+    return maps
+
+PARENT_MAPS = build_parent_maps()
+
 def find_parrent(table_name: str, kods: str, tips_cd: str):
     cache_key = (table_name, kods, tips_cd)
     if cache_key in parent_cache:
         return parent_cache[cache_key]
-    statement = f"SELECT KODS, TIPS_CD, NOSAUKUMS, STATUSS, VKUR_CD, VKUR_TIPS, ATRIB FROM {table_name} where KODS = {kods} and TIPS_CD = {tips_cd}; "
-    cursor = connection.execute(statement)
-    row = cursor.fetchone()  
-    if row is None:
+    # Try memory map first
+    m = PARENT_MAPS.get(table_name, {})
+    p = m.get((kods, tips_cd))
+    if p is not None:
+        parent_cache[cache_key] = p
+        return p
+    # Fallback to DB lookup as a safety net
+    try:
+        statement = f"SELECT KODS, TIPS_CD, NOSAUKUMS, STATUSS, VKUR_CD, VKUR_TIPS, ATRIB FROM {table_name} where KODS = ? and TIPS_CD = ?;"
+        cursor = connection.execute(statement, (kods, tips_cd))
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        parrent = {"kods": row[0], "tips_cd": row[1], "nosaukums": row[2], "status": row[3], "vkur_cd": row[4], "vkur_tips": row[5], "atrib": row[6]}
+        parent_cache[cache_key] = parrent
+        return parrent
+    except Exception:
         return None
-    parrent = {"kods": row[0], "tips_cd": row[1], "nosaukums": row[2], "status": row[3], "vkur_cd": row[4], "vkur_tips": row[5], "atrib": row[6]}
-    parent_cache[cache_key] = parrent
-    return parrent
 
 def get_parrents ( parrents: list, vkur_cd :str, vkur_tips :str ) :
     #print(f"search for vkur_cd: {vkur_cd} , vkur_tips: {vkur_tips}")
@@ -77,6 +133,8 @@ def get_parrents ( parrents: list, vkur_cd :str, vkur_tips :str ) :
         return 
 
     row = find_parrent(table_name = tips_to_table_name(vkur_tips), kods = vkur_cd, tips_cd = vkur_tips) 
+    if row is None:
+        return
     #print( f"found nosaukums: {row['nosaukums']} ,  kods: {row['kods']} , tips: {row['tips_cd']}")
     table_row = {"nosaukums": row['nosaukums'] , "kods": row['kods'], "tips": row['tips_cd'] , "table": tips_to_table_name(vkur_tips)}
     if row['tips_cd'] == 108:
